@@ -1,0 +1,347 @@
+---
+title: "Final Project"
+author: 'Charlie White & William Nkemdirim'
+date: "5/7/2021"
+output: pdf_document
+---
+
+## Required Packages:
+
+```{r, inclue=FALSE}
+suppressMessages(library(tidyverse))
+suppressMessages(library(SASxport))
+suppressMessages(library(MASS))
+suppressMessages(library(boot))
+suppressMessages(library(ISLR))
+suppressMessages(library(leaps))
+suppressMessages(library(zoo))
+suppressMessages(library(ROCR))
+suppressMessages(library(randomForest))
+suppressMessages(library(gbm))
+suppressMessages(library(tree))
+suppressMessages(library(e1071))
+suppressMessages(library(glmnet))
+suppressMessages(library(class))
+suppressMessages(library(ROCR))
+suppressMessages(library(PRROC))
+```
+
+## Data Sources
+
+### HSQ_J, DBQ_J, DUQ_J, DPQ_J, SMQ_J Datasets
+
+https://wwwn.cdc.gov/nchs/nhanes/Search/DataPage.aspx?Component=Questionnaire&CycleBeginYear=2017
+
+### OHXDEN Oral Health Dataset
+
+https://wwwn.cdc.gov/nchs/nhanes/Search/DataPage.aspx?Component=Examination&CycleBeginYear=2017
+
+## Installing Datasets:
+
+```{r}
+setwd("/Users/charliewhite/Downloads")
+DPQ_J <- read.xport("DPQ_J.XPT.txt")
+OHXDEN <- read.xport("OHXDEN_J.XPT.txt")
+SMQ_J <- read.xport("SMQ_J.XPT.txt")
+DBQ_J <- read.xport("DBQ_J.XPT.txt")
+HSQ_J <- read.xport("HSQ_J.XPT.txt")
+DUQ_J <- read.xport("DUQ_J.XPT.txt")
+```
+
+## Data Cleaning and Pre-processing Steps
+
+```{r}
+which( colnames(DUQ_J)=="DUQ200")
+which( colnames(DUQ_J)=="DUQ240")
+which( colnames(DUQ_J)=="DUQ370")
+# dropping unsused columns
+DUQ_J <- DUQ_J[,c(1,2,13,31)]
+DUQ_J[DUQ_J=="7"] <- NA
+DUQ_J[DUQ_J=="9"] <- NA
+DUQ_J$DUQ200 <- ifelse(DUQ_J$DUQ200 == 1, 1, 0)
+DUQ_J$DUQ240 <- ifelse(DUQ_J$DUQ240 == 1, 1, 0)
+DUQ_J$DUQ370 <- ifelse(DUQ_J$DUQ370 == 1, 1, 0)
+DUQ_J <- DUQ_J %>% drop_na()
+# creating a combined drug use variable
+DUQ_J$DCOMBO <- DUQ_J$DUQ200 + DUQ_J$DUQ240 + DUQ_J$DUQ370
+table(DUQ_J$DCOMBO)
+
+# assigning and dropping missing values
+which( colnames(HSQ_J)=="HSD010")
+HSQ_J <- HSQ_J[,c(1,2)]
+HSQ_J[HSQ_J=="7"] <- NA
+HSQ_J[HSQ_J=="9"] <- NA
+HSQ_J <- HSQ_J %>% drop_na()
+table(HSQ_J$HSD010)
+
+which( colnames(DBQ_J)=="DBQ700")
+DBQ_J <- DBQ_J[,c(1,14)]
+DBQ_J[DBQ_J=="7"] <- NA
+DBQ_J[DBQ_J=="9"] <- NA
+DBQ_J <- DBQ_J %>% drop_na()
+table(DBQ_J$DBQ700)
+
+SMQ_J <- SMQ_J[,c(1:2)]
+SMQ_J$SMQ020 <- ifelse(SMQ_J$SMQ020 == 1, 1, 0)
+SMQ_J <- SMQ_J %>% drop_na()
+table(SMQ_J$SMQ020)
+# a value of 0 indicates person has not smoked at least 100 cigarettes in their lifetime
+# a value of 1 indicates they have smoked at least 100 cigarettes in their lifetime
+
+which( colnames(OHXDEN)=="OHX31CTC" )
+OHXDEN <- OHXDEN[,c(1:64)]
+OHXDEN[] <- lapply(OHXDEN, as.character)
+DPQ_J[] <- lapply(DPQ_J, as.character)
+DPQ_J$SEQN <- as.character(DPQ_J$SEQN)
+
+# assigning a 1 to teeth that required medical attention and a 0 to sound permanent/primary teeth
+OHXDEN[OHXDEN=="A"] <- 1
+OHXDEN[OHXDEN=="D"] <- 0
+OHXDEN[OHXDEN=="E"] <- 1
+OHXDEN[OHXDEN=="F"] <- 1
+OHXDEN[OHXDEN=="J"] <- 1
+OHXDEN[OHXDEN=="K"] <- 1
+OHXDEN[OHXDEN=="M"] <- 1
+OHXDEN[OHXDEN=="P"] <- 1
+OHXDEN[OHXDEN=="Q"] <- 1
+OHXDEN[OHXDEN=="R"] <- 1
+OHXDEN[OHXDEN=="S"] <- 0
+OHXDEN[OHXDEN=="T"] <- 1
+OHXDEN[OHXDEN=="U"] <- 1
+OHXDEN[OHXDEN=="X"] <- 1
+OHXDEN[OHXDEN=="Y"] <- 1
+OHXDEN[OHXDEN=="Z"] <- 1
+DPQ_J[DPQ_J=="7"] <- NA
+DPQ_J[DPQ_J=="9"] <- NA
+
+which( colnames(OHXDEN)=="OHX01TC")
+which( colnames(OHXDEN)=="OHX32TC")
+
+
+# assigning a 1 to sound permanent/primary teeth and a 0 to implants/missing teeth
+OHXDEN[ , 5:36][ OHXDEN[ , 5:36] == 1] <- 1
+OHXDEN[ , 5:36][ OHXDEN[ , 5:36] == 2] <- 1
+OHXDEN[ , 5:36][ OHXDEN[ , 5:36] == 3] <- 0
+OHXDEN[ , 5:36][ OHXDEN[ , 5:36] == 4] <- 0
+OHXDEN[ , 5:36][ OHXDEN[ , 5:36] == 5] <- 0
+
+# combining all datasets
+
+df <- left_join(DPQ_J, OHXDEN, by = "SEQN")
+df <- df %>% drop_na()
+which( colnames(df)=="OHDEXSTS")
+which( colnames(df)=="OHDDESTS")
+df <- df[, -c(12,13)]
+df[] <- lapply(df, as.numeric)
+SMQ_J[] <- lapply(SMQ_J, as.numeric)
+df <- left_join(df, SMQ_J)
+df <- df %>% drop_na()
+DBQ_J[] <- lapply(DBQ_J, as.numeric)
+df <- left_join(df, DBQ_J)
+df <- df %>% drop_na()
+HSQ_J[] <- lapply(HSQ_J, as.numeric)
+df <- left_join(df, HSQ_J)
+df <- df %>% drop_na()
+DUQ_J[] <- lapply(DUQ_J, as.numeric)
+df <- left_join(df, DUQ_J)
+df <- df %>% drop_na()
+df[] <- lapply(df, as.numeric)
+```
+
+## Generating Relevant Variables and Calculating Descriptive Statistics
+
+```{r}
+#creating DPQ_score from mental health questionnaire 
+df$DPQ_score <- (df$DPQ010 + df$DPQ020 + df$DPQ030 + df$DPQ040 + df$DPQ050 + df$DPQ060 + df$DPQ070 + df$DPQ080 + df$DPQ090 + df$DPQ100)
+table(df$DPQ_score)
+summary(df$DPQ_score)
+sd(df$DPQ_score)
+IQR(df$DPQ_score)
+
+#creating number of healthy permanent teeth variable
+df$num_teeth <- (df$OHX01TC + df$OHX02TC + df$OHX03TC + df$OHX04TC + df$OHX05TC + df$OHX06TC + df$OHX07TC + df$OHX08TC +  df$OHX09TC + df$OHX10TC + df$OHX11TC + df$OHX12TC +  df$OHX13TC + df$OHX14TC + df$OHX15TC + df$OHX16TC +  df$OHX17TC + df$OHX18TC + df$OHX19TC + df$OHX20TC +  df$OHX21TC + df$OHX22TC + df$OHX23TC + df$OHX24TC +  df$OHX25TC + df$OHX26TC + df$OHX27TC + df$OHX28TC + df$OHX29TC + df$OHX30TC + df$OHX31TC + df$OHX32TC)
+
+table(df$num_teeth)
+summary(df$num_teeth)
+sd(df$num_teeth)
+IQR(df$num_teeth)
+
+#creating number of caries variable
+df$num_caries <- (df$OHX02CTC + df$OHX03CTC + df$OHX04CTC + df$OHX05CTC + df$OHX06CTC + df$OHX07CTC + df$OHX08CTC + df$OHX09CTC + df$OHX10CTC + df$OHX11CTC + df$OHX12CTC + df$OHX13CTC + df$OHX14CTC + df$OHX15CTC + df$OHX18CTC + df$OHX19CTC + df$OHX20CTC + df$OHX21CTC + df$OHX22CTC + df$OHX23CTC + df$OHX24CTC + df$OHX25CTC + df$OHX26CTC + df$OHX27CTC + df$OHX28CTC + df$OHX29CTC + df$OHX30CTC + df$OHX31CTC)
+
+table(df$num_caries)
+summary(df$num_caries)
+sd(df$num_caries)
+IQR(df$num_caries)
+
+table(df$SMQ020)
+table(df$DBQ700)
+table(df$DCOMBO)
+table(df$HSD010)
+
+```
+
+# Data Exploration and Analysis
+
+## Best Subset Selection and Validation Set Approach
+
+```{r}
+set.seed(1)
+# split data into test and training sets
+train <- sample(nrow(df), nrow(df)/2)
+test=(-train)
+
+regfit.best=regsubsets(DPQ_score ~ num_caries+num_teeth+SMQ020+DBQ700+HSD010+DCOMBO, df[train,])
+test.mat=model.matrix(DPQ_score~num_caries+num_teeth+SMQ020+DBQ700+HSD010+DCOMBO, df[test,])
+val.errors=rep(1:6)
+for (i in 1:6) {
+  coefi=coef(regfit.best, id=i)
+  pred=test.mat[,names(coefi)]%*%coefi
+  val.errors[i]=mean((df$DPQ_score[test]-pred)^2)
+}
+val.errors
+which.min(val.errors)
+plot(val.errors,xlab = "Number of Variables", ylab = "Test MSE", main = "Graph 1", pch = 19, type = "b")
+points(5,val.errors[5], col="red",cex=2,pch=20)
+coef(regfit.best, 5)
+
+# now on the full dataset 
+regfit.best=regsubsets(DPQ_score ~ num_caries+num_teeth+SMQ020+DBQ700+HSD010+DCOMBO, df)
+coef(regfit.best, 5)
+```
+
+## Decision Tree
+
+```{r}
+set.seed(1)
+train <- sample(nrow(df), nrow(df)/2)
+test <- -train
+df.train <- df[train,]
+df.test <- df[test,]
+
+tree.df <- tree(DPQ_score ~ num_teeth+SMQ020+DBQ700+HSD010+DCOMBO, data=df.train)
+summary(tree.df)
+plot(tree.df)
+text(tree.df, pretty = 0)
+```
+
+## Linear, Lasso, and Ridge Regression
+
+```{r}
+# Linear
+set.seed(1)
+train <- sample(nrow(df), nrow(df)/2)
+lm.fit = lm(DPQ_score ~ num_teeth + SMQ020 + DBQ700 + HSD010 + DCOMBO, df, subset=train)
+summary(lm.fit)
+attach(df)
+mean((DPQ_score-predict(lm.fit, df))[-train]^2)
+
+#Ridge
+x=model.matrix(DPQ_score ~ num_teeth+SMQ020+DBQ700+HSD010+DCOMBO, df)[,-1]
+y=df$DPQ_score
+
+grid=10^seq(10,-2,length=100)
+ridge.mod=glmnet(x,y,alpha=0,lambda=grid)
+predict(ridge.mod,s=50,type="coefficients")[1:5,]
+set.seed (1)
+train=sample(1:nrow(x), nrow(x)/2)
+test=(-train)
+y.test=y[test]
+ridge.mod=glmnet(x[train,],y[train],alpha=0,lambda=grid, thresh =1e-12)
+ridge.pred=predict(ridge.mod,s=4,newx=x[test,])
+mean((ridge.pred-y.test)^2)
+
+#Lasso
+lasso.mod=glmnet(x[train ,],y[train],alpha=1,lambda=grid)
+set.seed (1)
+cv.out=cv.glmnet(x[train ,],y[train],alpha=1)
+plot(cv.out)
+bestlam=cv.out$lambda.min
+bestlam
+#lambda = 0.007
+lasso.pred=predict(lasso.mod,s=bestlam ,newx=x[test,])
+mean((lasso.pred-y.test)^2)
+```
+
+## Generating Binary DEP Variable
+
+```{r}
+df$DEP = df$DPQ_score
+df$DEP <- cut(df$DPQ_score,breaks=c(-Inf,8, Inf), labels = c("Non-Dep", "Dep"))
+summary(df$DEP)
+table(df$DEP)
+```
+
+## Logistic Regression, LDA, QDA, KNN
+
+```{r}
+#logistic regression
+glm.fit = glm(DEP ~ num_teeth+SMQ020+DBQ700+HSD010+DCOMBO, data= df, family='binomial')
+summary(glm.fit)
+glm.prob = predict(glm.fit, type = 'response')
+glm.predict1 = ifelse(glm.prob > 0.5, 'Dep', 'Non-Dep')
+table(glm.predict1, df$DEP)
+mean(glm.predict1 == df$DEP)
+
+#ROC curve
+thres_seq <- seq(from = 0.14, to = 0.36, by = 0.01)
+len <- length(thres_seq)
+FPR_seq <- rep(0,len)
+TPR_seq <- rep(0,len)
+ypred <- predict(glm.fit, df, type="response")
+for(j in 1:len){
+  yhat <- ypred > thres_seq[j]
+  mat <- table(df$DEP, yhat)
+  FPR_seq[j] <- mat[1,2]/(mat[1,1]+mat[1,2])
+  TPR_seq[j] <- mat[2,2]/(mat[2,1]+mat[2,2])
+}
+plot(FPR_seq, TPR_seq, xlab ='FPR',ylab = 'TPR', main = "ROC Curve")
+
+# LDA
+lda.fit.dep=lda(DEP~num_teeth+SMQ020+DBQ700+HSD010+DCOMBO, data=df);
+lda.fit.dep
+lda.predict.dep = predict(lda.fit.dep, df)
+lda.class = lda.predict.dep$class;
+table(lda.class, df$DEP)
+mean(lda.class != df$DEP)
+mean(lda.class == df$DEP)
+# 0.1704331
+# 0.8295669
+
+#QDA
+qda.fit.dep=qda(DEP~num_teeth+SMQ020+DBQ700+HSD010+DCOMBO, data=df);
+qda.fit.dep
+qda.predict.dep = predict(qda.fit.dep, df)
+qda.class = qda.predict.dep$class;
+table(qda.class, df$DEP)
+mean(qda.class != df$DEP)
+mean(qda.class == df$DEP)
+# [1] 0.1935028
+# [1] 0.8064972
+
+#knn
+num_caries <- list(df$num_caries) 
+num_teeth <- list(df$num_teeth)
+DBQ700 <- list(df$DBQ700)
+DCOMBO <- list(df$DCOMBO)
+SMQ020 <- list(df$SMQ020)
+HSD010 <- list(df$HSD010)
+set.seed(1)
+train = (df$SEQN < 100592); 
+
+train.X = cbind(df$num_caries, df$num_teeth, df$DBQ700, df$DCOMBO, df$HSD010)[train, ]
+test.X = cbind(df$num_caries, df$num_teeth, df$DBQ700, df$DCOMBO, df$HSD010)[!train, ]
+train.dep = df$DEP[train]
+dep.nt = df$DEP[!train]
+knn.train.pred = knn(train.X,train.X, train.dep, k=1)
+mean(knn.train.pred != train.dep) ##Training Error
+mean(knn.train.pred == train.dep)
+
+knn.test.pred = knn(train.X,test.X, train.dep, k=1)
+mean(knn.test.pred != dep.nt) ##Test Error
+mean(knn.test.pred == dep.nt)
+
+```
+
+
+
